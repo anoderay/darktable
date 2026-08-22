@@ -1,0 +1,30 @@
+--- a/src/dtgtk/thumbnail.c
++++ b/src/dtgtk/thumbnail.c
+@@ -736,14 +736,21 @@
+   *out_n = n;
+ }
+ 
+-// blend a color 50% toward white to get a paler/pastel tone: the raw CSS
+-// label colors are fully saturated and too "poppy" for a full-background
+-// tint, this keeps the hue recognizable while calming it down
++// desaturate a color toward its own perceived gray value, then darken it
++// slightly: the raw CSS label colors are fully saturated and too "poppy"
++// for a full-background tint, this keeps the hue recognizable but muted
++// and a bit darker instead of a light pastel tone
+ static void _pale_color(GdkRGBA *c)
+ {
+-  c->red   = c->red   + (1.0 - c->red)   * 0.5;
+-  c->green = c->green + (1.0 - c->green) * 0.5;
+-  c->blue  = c->blue  + (1.0 - c->blue)  * 0.5;
++  // how far to blend toward gray (0.0 = untouched, 1.0 = fully gray)
++  const double desaturate = 0.35;
++  // how much to darken afterwards (1.0 = untouched, 0.0 = black)
++  const double darken = 0.8;
++
++  const double gray = 0.299 * c->red + 0.587 * c->green + 0.114 * c->blue;
++  c->red   = (c->red   + (gray - c->red)   * desaturate) * darken;
++  c->green = (c->green + (gray - c->green) * desaturate) * darken;
++  c->blue  = (c->blue  + (gray - c->blue)  * desaturate) * darken;
+   // alpha is handled separately via DT_THUMB_COLORLABEL_FRAME_ALPHA
+ }
+ 

@@ -1584,6 +1584,13 @@
     <longdescription>if enabled, scrolling the lighttable scrolls by some number of pixels, as expected with a touch pad.\ndisabled, the lighttable scrolls full rows of thumbnails, as befits a scroll wheel.</longdescription>
   </dtconfig>
   <dtconfig prefs="lighttable" section="thumbs">
+    <name>plugins/lighttable/colorlabels_full_frame</name>
+    <type>bool</type>
+    <default>false</default>
+    <shortdescription>tint thumbnail frame with color labels</shortdescription>
+    <longdescription>if enabled, the whole thumbnail background is tinted with the active color label(s) instead of only showing small dots.\ncolors are shown as a pale, half-opacity tint: a single label fills the background solid, two active labels are shown as a diagonal half-split, three or more as diagonal stripes.</longdescription>
+  </dtconfig>
+  <dtconfig prefs="lighttable" section="thumbs">
     <name>backthumbs_mipsize</name>
     <type>
       <enum>

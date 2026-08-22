@@ -232,6 +232,35 @@ static void _image_get_infos(dt_thumbnail_t *thumb)
   if(!dt_is_valid_imgid(thumb->imgid))
     return;
 
+  // colorlabels: read this unconditionally, even when overlays are hidden
+  // below. the color-label frame painted on #thumb-back must stay in sync
+  // with the database regardless of the overlay display mode.
+  thumb->colorlabels = 0;
+  DT_DEBUG_SQLITE3_CLEAR_BINDINGS(darktable.view_manager->statements.get_color);
+  DT_DEBUG_SQLITE3_RESET(darktable.view_manager->statements.get_color);
+  DT_DEBUG_SQLITE3_BIND_INT(darktable.view_manager->statements.get_color, 1, thumb->imgid);
+
+  while(sqlite3_step(darktable.view_manager->statements.get_color) == SQLITE_ROW)
+  {
+    const int col = sqlite3_column_int(darktable.view_manager->statements.get_color, 0);
+    // we reuse CPF_* flags, as we'll pass them to the paint fct after
+    if(col == 0)
+      thumb->colorlabels |= CPF_LABEL_RED;
+    else if(col == 1)
+      thumb->colorlabels |= CPF_LABEL_YELLOW;
+    else if(col == 2)
+      thumb->colorlabels |= CPF_LABEL_GREEN;
+    else if(col == 3)
+      thumb->colorlabels |= CPF_LABEL_BLUE;
+    else if(col == 4)
+      thumb->colorlabels |= CPF_LABEL_PURPLE;
+  }
+  if(thumb->w_color)
+  {
+    GtkDarktableThumbnailBtn *btn = (GtkDarktableThumbnailBtn *)thumb->w_color;
+    btn->icon_flags = thumb->colorlabels;
+  }
+
   // we only get here infos that might change, others(exif, ...) are
   // cached on widget creation
 
@@ -266,33 +295,6 @@ static void _image_get_infos(dt_thumbnail_t *thumb)
   if(old_rating != thumb->rating)
   {
     _thumb_update_rating_class(thumb);
-  }
-
-  // colorlabels
-  thumb->colorlabels = 0;
-  DT_DEBUG_SQLITE3_CLEAR_BINDINGS(darktable.view_manager->statements.get_color);
-  DT_DEBUG_SQLITE3_RESET(darktable.view_manager->statements.get_color);
-  DT_DEBUG_SQLITE3_BIND_INT(darktable.view_manager->statements.get_color, 1, thumb->imgid);
-
-  while(sqlite3_step(darktable.view_manager->statements.get_color) == SQLITE_ROW)
-  {
-    const int col = sqlite3_column_int(darktable.view_manager->statements.get_color, 0);
-    // we reuse CPF_* flags, as we'll pass them to the paint fct after
-    if(col == 0)
-      thumb->colorlabels |= CPF_LABEL_RED;
-    else if(col == 1)
-      thumb->colorlabels |= CPF_LABEL_YELLOW;
-    else if(col == 2)
-      thumb->colorlabels |= CPF_LABEL_GREEN;
-    else if(col == 3)
-      thumb->colorlabels |= CPF_LABEL_BLUE;
-    else if(col == 4)
-      thumb->colorlabels |= CPF_LABEL_PURPLE;
-  }
-  if(thumb->w_color)
-  {
-    GtkDarktableThumbnailBtn *btn = (GtkDarktableThumbnailBtn *)thumb->w_color;
-    btn->icon_flags = thumb->colorlabels;
   }
 
   // altered
@@ -707,6 +709,150 @@ static void _thumb_update_image_box(dt_thumbnail_t *thumb)
     CLAMP(thumb->zoomy,
           (nhi * darktable.gui->ppd_thb - thumb->img_height * scale)
           / darktable.gui->ppd_thb, 0);
+}
+
+// how much of the label's own opacity to use when tinting the thumbnail
+// background: kept below 1.0 so hover/selection state (also painted on
+// #thumb-back) stays visible underneath the color-label tint
+#define DT_THUMB_COLORLABEL_FRAME_ALPHA 0.6
+
+// map each single-label bit flag to its resolved CSS color (GdkRGBA),
+// reusing the same theme colors already used to paint the small label dots
+static void _get_active_colorlabel_colors(const dt_thumbnail_t *thumb,
+                                           GdkRGBA *out,
+                                           int *out_n)
+{
+  static const struct { int flag; dt_colorlabels_enum idx; } map[] = {
+    { CPF_LABEL_RED,    DT_COLORLABELS_RED    },
+    { CPF_LABEL_YELLOW, DT_COLORLABELS_YELLOW },
+    { CPF_LABEL_GREEN,  DT_COLORLABELS_GREEN  },
+    { CPF_LABEL_BLUE,   DT_COLORLABELS_BLUE   },
+    { CPF_LABEL_PURPLE, DT_COLORLABELS_PURPLE },
+  };
+  int n = 0;
+  for(size_t i = 0; i < G_N_ELEMENTS(map); i++)
+    if(thumb->colorlabels & map[i].flag)
+      out[n++] = darktable.bauhaus->colorlabels[map[i].idx];
+  *out_n = n;
+}
+
+// desaturate a color toward its own perceived gray value, then darken it
+// slightly: the raw CSS label colors are fully saturated and too "poppy"
+// for a full-background tint, this keeps the hue recognizable but muted
+// and a bit darker instead of a light pastel tone
+static void _pale_color(GdkRGBA *c)
+{
+  // how far to blend toward gray (0.0 = untouched, 1.0 = fully gray)
+  const double desaturate = 0.35;
+  // how much to darken afterwards (1.0 = untouched, 0.0 = black)
+  const double darken = 0.8;
+
+  const double gray = 0.299 * c->red + 0.587 * c->green + 0.114 * c->blue;
+  c->red   = (c->red   + (gray - c->red)   * desaturate) * darken;
+  c->green = (c->green + (gray - c->green) * desaturate) * darken;
+  c->blue  = (c->blue  + (gray - c->blue)  * desaturate) * darken;
+  // alpha is handled separately via DT_THUMB_COLORLABEL_FRAME_ALPHA
+}
+
+// paint the full color-label "frame" behind the thumbnail image:
+//  - a single active label fills the whole background solid
+//  - exactly two active labels split the background diagonally in half,
+//    one solid triangle per color (no repeating stripes)
+//  - three or more active labels use a repeating diagonal stripe pattern,
+//    one stripe per color
+static gboolean _event_back_draw(GtkWidget *widget,
+                                  cairo_t *cr,
+                                  gpointer user_data)
+{
+  dt_thumbnail_t *thumb = (dt_thumbnail_t *)user_data;
+
+  // opt-in via preference, off by default -> no behaviour change unless enabled
+  if(!dt_conf_get_bool("plugins/lighttable/colorlabels_full_frame"))
+    return FALSE;
+
+  GdkRGBA colors[DT_COLORLABELS_LAST];
+  int n = 0;
+  _get_active_colorlabel_colors(thumb, colors, &n);
+  if(n == 0) return FALSE; // no label -> nothing to draw
+
+  for(int i = 0; i < n; i++)
+    _pale_color(&colors[i]);
+
+  const int w = gtk_widget_get_allocated_width(widget);
+  const int h = gtk_widget_get_allocated_height(widget);
+
+  cairo_save(cr);
+
+  if(n == 1)
+  {
+    // single label: fill the whole background area
+    // keep the hover/selection background (also on #thumb-back) partly
+    // visible underneath the tint instead of fully hiding it
+    cairo_set_source_rgba(cr, colors[0].red, colors[0].green, colors[0].blue,
+                           colors[0].alpha * DT_THUMB_COLORLABEL_FRAME_ALPHA);
+    cairo_rectangle(cr, 0, 0, w, h);
+    cairo_fill(cr);
+  }
+  else if(n == 2)
+  {
+    // exactly two labels: split into two triangles along the diagonal
+    // from top-left to bottom-right, one solid color per half
+    cairo_move_to(cr, 0, 0);
+    cairo_line_to(cr, w, 0);
+    cairo_line_to(cr, w, h);
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, colors[0].red, colors[0].green, colors[0].blue,
+                           colors[0].alpha * DT_THUMB_COLORLABEL_FRAME_ALPHA);
+    cairo_fill(cr);
+
+    cairo_move_to(cr, 0, 0);
+    cairo_line_to(cr, w, h);
+    cairo_line_to(cr, 0, h);
+    cairo_close_path(cr);
+    cairo_set_source_rgba(cr, colors[1].red, colors[1].green, colors[1].blue,
+                           colors[1].alpha * DT_THUMB_COLORLABEL_FRAME_ALPHA);
+    cairo_fill(cr);
+  }
+  else
+  {
+    // three or more labels: repeating diagonal stripe pattern, one stripe
+    // per color. stripes are noticeably wider than the earlier revision
+    // (18px instead of 10px) so the pattern reads as calm bands rather
+    // than a busy, tightly-repeating barber pole
+    const double stripe_px = DT_PIXEL_APPLY_DPI(18.0);
+    const double period = stripe_px * n;
+    // hard edge between stripes, scaled to a tiny fraction of one stripe's
+    // own width so it stays negligible regardless of stripe_px/n
+    const double eps = 0.001 / n;
+
+    cairo_pattern_t *pat = cairo_pattern_create_linear(0.0, 0.0, period, 0.0);
+    for(int i = 0; i < n; i++)
+    {
+      const double off0 = (double)i / n;
+      const double off1 = (double)(i + 1) / n - eps;
+      cairo_pattern_add_color_stop_rgba(pat, off0, colors[i].red, colors[i].green,
+                                         colors[i].blue,
+                                         colors[i].alpha * DT_THUMB_COLORLABEL_FRAME_ALPHA);
+      cairo_pattern_add_color_stop_rgba(pat, off1, colors[i].red, colors[i].green,
+                                         colors[i].blue,
+                                         colors[i].alpha * DT_THUMB_COLORLABEL_FRAME_ALPHA);
+    }
+    cairo_pattern_set_extend(pat, CAIRO_EXTEND_REPEAT);
+
+    cairo_matrix_t mat;
+    // G_PI_4 (glib) instead of M_PI_4 (math.h): already available via the
+    // existing gtk/glib includes and portable across all build platforms
+    cairo_matrix_init_rotate(&mat, G_PI_4); // 45° -> diagonal stripes
+    cairo_pattern_set_matrix(pat, &mat);
+
+    cairo_set_source(cr, pat);
+    cairo_rectangle(cr, 0, 0, w, h);
+    cairo_fill(cr);
+    cairo_pattern_destroy(pat);
+  }
+
+  cairo_restore(cr);
+  return FALSE; // don't block further default drawing
 }
 
 static gboolean _event_image_draw(GtkWidget *widget,
@@ -1499,6 +1645,9 @@ GtkWidget *dt_thumbnail_create_widget(dt_thumbnail_t *thumb,
     thumb->w_back = gtk_event_box_new();
     gtk_widget_set_name(thumb->w_back, "thumb-back");
     dt_gui_connect_motion(thumb->w_back, _event_main_motion_cb, NULL, NULL, thumb);
+    // paint the color-label frame after the normal CSS background/state drawing
+    g_signal_connect_after(G_OBJECT(thumb->w_back), "draw",
+                            G_CALLBACK(_event_back_draw), thumb);
     gtk_widget_show(thumb->w_back);
     gtk_container_add(GTK_CONTAINER(thumb->w_main), thumb->w_back);
 
