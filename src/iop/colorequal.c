@@ -2630,11 +2630,13 @@ static gboolean _iop_colorequalizer_draw(GtkWidget *widget,
 
   // Draw a white vertical line showing the hue currently under the mouse
   // cursor on the main image (mirroring the tone equalizer's exposure
-  // cursor line).  The graph x-axis is linear in conventional GUI degrees,
-  // shifted by hue_shift, so the hue is mapped directly to x.
+  // cursor line).  cursor_hue is already an absolute GUI-degree hue
+  // (read straight from the pixel), so it maps directly to x. Unlike
+  // the node/curve positions above, which start from an unshifted
+  // index and need + dx to account for hue_shift.
   if(self->enabled && g->cursor_valid)
   {
-    float x_cursor = (g->cursor_hue / 360.0f + dx) * graph_width;
+    float x_cursor = g->cursor_hue / 360.0f * graph_width;
     x_cursor = fmodf(x_cursor, graph_width); // hue is periodic
     if(x_cursor < 0.0f) x_cursor += graph_width;
 
