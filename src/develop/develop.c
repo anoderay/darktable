@@ -116,9 +116,8 @@ static void _check_tone_mapping_conflict(gpointer instance, dt_develop_t *dev)
 
     if(conflict && m->enabled && !m->hide_enable_button)
       dt_iop_set_module_trouble_message(m,
-          _("multiple display transforms enabled (<u>details</u>)"),
-          _("more than one module converts the image from\n"
-            "scene-referred to display-referred at once\n"
+          _("multiple tonemappers enabled (<u>details</u>)"),
+          _("more than one tonemapping-module enabled\n"
             "(base curve, filmic rgb, sigmoid, agx, spektrafilm).\n"
             "this is not recommended. Make sure you know\n"
             "what you are doing, their tone curves stack."),
