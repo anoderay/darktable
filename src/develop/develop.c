@@ -68,6 +68,66 @@
 // Forward declaration
 static inline void _dt_dev_load_raw(dt_develop_t *dev, const dt_imgid_t imgid);
 
+// --- tone mapping conflict check -------------------------------------------
+// Warn when more than one "scene -> display" tone mapping
+// module is enabled at the same time. Lives here, not in one of the
+// affected iops, because the check only ever touches dev->iop.
+static const char *const _tone_mapping_ops[] =
+{
+  "basecurve", "filmicrgb", "sigmoid", "agx", "spektrafilm", NULL
+};
+
+static gboolean _is_tone_mapping_op(const dt_iop_module_t *module)
+{
+  for(const char *const *op = _tone_mapping_ops; *op; op++)
+    if(dt_iop_module_is(module, *op))
+      return TRUE;
+  return FALSE;
+}
+
+// Runs once the whole preview pipe has finished recomputing, so every
+// module's commit_params() has already run for the current history state.
+// Checking mid-pipe would depend on commit order and could read stale
+// enabled/disabled flags for modules not yet reached.
+static void _check_tone_mapping_conflict(gpointer instance, dt_develop_t *dev)
+{
+  if(!dev) return;
+
+  // pass 1: count all currently enabled tone mapping instances, regardless
+  // of module identity -- two masked sigmoid instances count as two, same
+  // as one sigmoid + one filmic rgb
+  int active_count = 0;
+  for(GList *l = dev->iop; l; l = g_list_next(l))
+  {
+    dt_iop_module_t *m = l->data;
+    if(_is_tone_mapping_op(m) && m->enabled && !m->hide_enable_button)
+      active_count++;
+  }
+
+  const gboolean conflict = active_count > 1;
+
+  // pass 2: set or clear the message on every instance, including disabled
+  // ones. this is what makes the warning disappear again once the user
+  // turns a conflicting module off
+  for(GList *l = dev->iop; l; l = g_list_next(l))
+  {
+    dt_iop_module_t *m = l->data;
+    if(!_is_tone_mapping_op(m)) continue;
+
+    if(conflict && m->enabled && !m->hide_enable_button)
+      dt_iop_set_module_trouble_message(m,
+          _("multiple display transforms enabled (<u>details</u>)"),
+          _("more than one module converts the image from\n"
+            "scene-referred to display-referred at once\n"
+            "(base curve, filmic rgb, sigmoid, agx, spektrafilm).\n"
+            "this is not recommended. Make sure you know\n"
+            "what you are doing, their tone curves stack."),
+          NULL);
+    else
+      dt_iop_clear_module_trouble_message(m);
+  }
+}
+
 void dt_dev_init(dt_develop_t *dev,
                  const gboolean gui_attached)
 {
@@ -135,6 +195,12 @@ void dt_dev_init(dt_develop_t *dev,
   dev->iop_instance = 0;
   dev->iop = NULL;
   dev->alliop = NULL;
+
+  // warn about conflicting tone mapping modules;
+  // GUI-only, no point tracking this for headless/export-only devs
+  if(dev->gui_attached)
+    dt_control_signal_connect(darktable.signals, DT_SIGNAL_DEVELOP_PREVIEW_PIPE_FINISHED,
+                               G_CALLBACK(_check_tone_mapping_conflict), dev);
 
   dev->allprofile_info = NULL;
 
@@ -210,6 +276,12 @@ static void _cleanup_pinned_dev(dt_develop_t *pinned_dev)
 void dt_dev_cleanup(dt_develop_t *dev)
 {
   if(!dev) return;
+
+  // counterpart to the connect in dt_dev_init() -- without this, the
+  // callback would keep a dangling pointer to this dev after cleanup
+  if(dev->gui_attached)
+    dt_control_signal_disconnect(darktable.signals, G_CALLBACK(_check_tone_mapping_conflict), dev);
+
   // image_cache does not have to be unref'd, this is done outside develop module.
   dt_dev_init_chroma(dev);
 
