@@ -1,16 +1,16 @@
 # Nightly regeneration of po/darktable.pot, the template Weblate reads.
 #
-# The POT is generated exactly as described in the darktable wiki:
-#   https://github.com/darktable-org/darktable/wiki/Translating-darktable
-#     ($ cd po && intltool-update -pot)
-#   https://github.com/darktable-org/darktable/wiki/Translations
-#     (the generic template lives at po/darktable.pot)
+# IMPORTANT: intltool-update -pot cannot run on a bare checkout. po/POTFILES.in
+# lists generated sources under build/ (introspection_*.c, conf_gen.h,
+# preferences_gen.h, styles_string.h, masks_group_presets_strings.h,
+# darktable_authors.h, org.darktable.darktable.desktop.in). These only exist
+# after a CMake configure + build, so we build darktable first and only then
+# run intltool-update -pot from po/ (it looks for ../build).
 #
-# Only the POT is committed here. The per-language PO files are owned by
-# Weblate and are not touched by this workflow.
+# Only the POT is committed. The per-language PO files stay owned by Weblate
+# and are not touched here.
 #
-# Same idea as the nightly POT job of dtdocs:
-#   https://docs.darktable.org/usermanual/development/en/contributing/translations-setup/
+# Dependency list and build mirror the Linux job in .github/workflows/ci.yml.
 
 name: Update POT
 
@@ -28,21 +28,53 @@ concurrency:
 
 jobs:
   update-pot:
-    # Do not run on forks.
-    # if: github.repository == 'darktable-org/darktable'
+    # Block scheduled runs on forks, but still allow a fork owner to test via
+    # "Run workflow" (manual dispatch). Same guard darktable uses elsewhere.
+    if: github.repository == 'darktable-org/darktable' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
-      - name: Check out master
+      - name: Check out the repository
         uses: actions/checkout@v4
         with:
-          ref: master
+          submodules: false
+          fetch-depth: 1
 
-      - name: Install gettext and intltool
+      - name: Install build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y --no-install-recommends gettext intltool
+          sudo apt-get --yes install \
+            build-essential cmake ninja-build \
+            appstream-util desktop-file-utils gettext intltool \
+            libarchive-dev libatk1.0-dev libavif-dev libcairo2-dev \
+            libcmocka-dev libcolord-dev libcolord-gtk-dev libcups2-dev \
+            libcurl4-gnutls-dev libexiv2-dev libgdk-pixbuf-2.0-dev \
+            libglib2.0-dev libgmic-dev libgphoto2-dev libgraphicsmagick1-dev \
+            libgtk-3-dev libheif-dev libjpeg-dev libjson-glib-dev liblcms2-dev \
+            liblensfun-dev liblua5.4-dev libonnxruntime-dev \
+            libopencv-calib3d-dev libopencv-core-dev libopencv-features2d-dev \
+            libopencv-flann-dev libopencv-imgproc-dev libopenexr-dev \
+            libopenjp2-7-dev libosmgpsmap-1.0-dev libpango1.0-dev libpng-dev \
+            libportmidi-dev libpotrace-dev libpugixml-dev libraw-dev \
+            librsvg2-dev libsaxon-java libsdl2-dev libsecret-1-dev \
+            libsqlite3-dev libtiff5-dev libwebp-dev libx11-dev libxml2-dev \
+            libxml2-utils perl po4a python3-jsonschema xsltproc zlib1g-dev
 
-      - name: Generate POT (as in the wiki)
+      - name: Fetch build submodules
+        run: |
+          # Init all submodules, but skip the large integration-test repo
+          # (same as ci.yml). The submodule name carries the src/ prefix.
+          git submodule init
+          git config submodule.src/tests/integration.update none
+          git submodule update
+
+      - name: Configure and build (generates the files POTFILES.in needs)
+        run: |
+          # intltool-update looks for ../build relative to po/, so the build
+          # tree must sit at the repository root and be named "build".
+          cmake -S . -B build -G Ninja -DBUILD_TESTING=OFF
+          cmake --build build
+
+      - name: Generate POT
         working-directory: po
         run: |
           intltool-update -pot
@@ -51,13 +83,9 @@ jobs:
       - name: Check whether any translatable string changed
         id: diff
         run: |
-          # Source line references (#:) and the creation date change with almost
-          # every commit. Ignore them, so we only commit when strings change.
-          if git cat-file -e HEAD:po/darktable.pot 2>/dev/null; then
-            git show HEAD:po/darktable.pot > "$RUNNER_TEMP/old.pot"
-          else
-            : > "$RUNNER_TEMP/old.pot"
-          fi
+          # Line references (#:) and the creation date change on every run.
+          # Ignore them, so we only commit on real string changes.
+          git show HEAD:po/darktable.pot > "$RUNNER_TEMP/old.pot" 2>/dev/null || : > "$RUNNER_TEMP/old.pot"
           norm() { grep -v -e '^#:' -e '^"POT-Creation-Date:' "$1" || true; }
           if diff -q <(norm "$RUNNER_TEMP/old.pot") <(norm po/darktable.pot) > /dev/null; then
             echo "No string changes."
