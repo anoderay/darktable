@@ -55,7 +55,7 @@ const char **description(dt_iop_module_t *self)
   return dt_iop_set_description(self,
                                 _("applies a tone mapping curve.\n"
                                     "inspired by Blender's AgX tone mapper"),
-                                _("corrective and creative"),
+                                _("corrective and creativeaand a test"),
                                 _("linear, RGB, scene-referred"),
                                 _("non-linear, RGB"),
                                 _("linear, RGB, display-referred"));
