@@ -1,0 +1,77 @@
+# Nightly regeneration of po/darktable.pot, the template Weblate reads.
+#
+# The POT is generated exactly as described in the darktable wiki:
+#   https://github.com/darktable-org/darktable/wiki/Translating-darktable
+#     ($ cd po && intltool-update -pot)
+#   https://github.com/darktable-org/darktable/wiki/Translations
+#     (the generic template lives at po/darktable.pot)
+#
+# Only the POT is committed here. The per-language PO files are owned by
+# Weblate and are not touched by this workflow.
+#
+# Same idea as the nightly POT job of dtdocs:
+#   https://docs.darktable.org/usermanual/development/en/contributing/translations-setup/
+
+name: Update POT
+
+on:
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-pot
+  cancel-in-progress: false
+
+jobs:
+  update-pot:
+    # Do not run on forks.
+    # if: github.repository == 'darktable-org/darktable'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out master
+        uses: actions/checkout@v4
+        with:
+          ref: master
+
+      - name: Install gettext and intltool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gettext intltool
+
+      - name: Generate POT (as in the wiki)
+        working-directory: po
+        run: |
+          intltool-update -pot
+          test -s darktable.pot
+
+      - name: Check whether any translatable string changed
+        id: diff
+        run: |
+          # Source line references (#:) and the creation date change with almost
+          # every commit. Ignore them, so we only commit when strings change.
+          if git cat-file -e HEAD:po/darktable.pot 2>/dev/null; then
+            git show HEAD:po/darktable.pot > "$RUNNER_TEMP/old.pot"
+          else
+            : > "$RUNNER_TEMP/old.pot"
+          fi
+          norm() { grep -v -e '^#:' -e '^"POT-Creation-Date:' "$1" || true; }
+          if diff -q <(norm "$RUNNER_TEMP/old.pot") <(norm po/darktable.pot) > /dev/null; then
+            echo "No string changes."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            git checkout -- po/darktable.pot 2>/dev/null || true
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit and push POT
+        if: steps.diff.outputs.changed == 'true'
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add po/darktable.pot
+          git commit -m "Update po/darktable.pot [skip ci]"
+          git push origin HEAD:master
