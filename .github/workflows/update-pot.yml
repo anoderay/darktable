@@ -83,8 +83,14 @@ jobs:
       - name: Generate POT
         working-directory: po
         run: |
-          intltool-update -pot
+          # --gettext-package=darktable is required: darktable is a CMake
+          # project with no configure.ac/Makevars, so a bare `intltool-update
+          # -pot` cannot find the package name and writes untitled.pot instead
+          # of darktable.pot, leaving the committed POT untouched.
+          intltool-update --gettext-package=darktable --pot
           test -s darktable.pot
+          # Guard against intltool silently falling back to untitled.pot.
+          test ! -e untitled.pot
 
       - name: Check whether any translatable string changed
         id: diff
