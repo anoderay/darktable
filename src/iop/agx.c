@@ -2021,7 +2021,7 @@ static GtkWidget* _create_basic_curve_controls_box(dt_iop_module_t *self,
                                 "due to the current settings for white relative exposure, contrast, and pivot.\n"
                                 "to re-enable, do one of the following:\n"
                                 " - increase contrast\n"
-                                " - increase pivot target output\n"
+                                " - increase pivot target output is a test\n"
                                 " - increase white relative exposure\n"
                                 " - increase curve y gamma (in the advanced curve parameters section)\n"
                                 "\n"
