@@ -50,7 +50,7 @@ jobs:
             libcurl4-gnutls-dev libexiv2-dev libgdk-pixbuf-2.0-dev \
             libglib2.0-dev libgmic-dev libgphoto2-dev libgraphicsmagick1-dev \
             libgtk-3-dev libheif-dev libjpeg-dev libjson-glib-dev liblcms2-dev \
-            liblensfun-dev liblua5.4-dev libonnxruntime-dev \
+            liblensfun-dev liblua5.4-dev \
             libopencv-calib3d-dev libopencv-core-dev libopencv-features2d-dev \
             libopencv-flann-dev libopencv-imgproc-dev libopenexr-dev \
             libopenjp2-7-dev libosmgpsmap-1.0-dev libpango1.0-dev libpng-dev \
@@ -58,6 +58,12 @@ jobs:
             librsvg2-dev libsaxon-java libsdl2-dev libsecret-1-dev \
             libsqlite3-dev libtiff5-dev libwebp-dev libx11-dev libxml2-dev \
             libxml2-utils perl po4a python3-jsonschema xsltproc zlib1g-dev
+          # Note: ci.yml also installs libonnxruntime-dev, but that package
+          # only exists in the ubuntu:26.04 container ci.yml runs in, not on
+          # the 24.04 runner. We build with -DUSE_AI=OFF below, so it is not
+          # needed. The AI modules' translatable strings live in
+          # src/common/ai/*.c (plain sources read directly by intltool), so
+          # turning USE_AI off does not drop anything from the POT.
 
       - name: Fetch build submodules
         run: |
@@ -71,7 +77,7 @@ jobs:
         run: |
           # intltool-update looks for ../build relative to po/, so the build
           # tree must sit at the repository root and be named "build".
-          cmake -S . -B build -G Ninja -DBUILD_TESTING=OFF
+          cmake -S . -B build -G Ninja -DBUILD_TESTING=OFF -DUSE_AI=OFF
           cmake --build build
 
       - name: Generate POT
