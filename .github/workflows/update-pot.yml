@@ -29,7 +29,7 @@ concurrency:
 jobs:
   update-pot:
     # Do not run on forks.
-    if: github.repository == 'darktable-org/darktable'
+    # if: github.repository == 'darktable-org/darktable'
     runs-on: ubuntu-latest
     steps:
       - name: Check out master
