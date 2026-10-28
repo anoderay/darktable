@@ -58,12 +58,12 @@ jobs:
             librsvg2-dev libsaxon-java libsdl2-dev libsecret-1-dev \
             libsqlite3-dev libtiff5-dev libwebp-dev libx11-dev libxml2-dev \
             libxml2-utils perl po4a python3-jsonschema xsltproc zlib1g-dev
-          # Note: ci.yml also installs libonnxruntime-dev, but that package
-          # only exists in the ubuntu:26.04 container ci.yml runs in, not on
-          # the 24.04 runner. We build with -DUSE_AI=OFF below, so it is not
-          # needed. The AI modules' translatable strings live in
-          # src/common/ai/*.c (plain sources read directly by intltool), so
-          # turning USE_AI off does not drop anything from the POT.
+          # Note: no libonnxruntime-dev here. That package only exists in the
+          # ubuntu:26.04 container ci.yml runs in, not on the 24.04 runner.
+          # We build with AI enabled (-DUSE_AI=ON); CMake's FindONNXRuntime
+          # then auto-downloads ONNX Runtime from GitHub, exactly as the
+          # nightly AppImage build does (it also ships no onnx package and
+          # builds with build.sh --enable-ai).
 
       - name: Fetch build submodules
         run: |
@@ -77,7 +77,7 @@ jobs:
         run: |
           # intltool-update looks for ../build relative to po/, so the build
           # tree must sit at the repository root and be named "build".
-          cmake -S . -B build -G Ninja -DBUILD_TESTING=OFF -DUSE_AI=OFF
+          cmake -S . -B build -G Ninja -DBUILD_TESTING=OFF -DUSE_AI=ON
           cmake --build build
 
       - name: Generate POT
